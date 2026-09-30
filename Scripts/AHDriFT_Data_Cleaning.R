@@ -1,6 +1,6 @@
 # ################################################################################
 # Title: AHDriFT Data Cleaning
-# Wildlife Insights Data Processing workflow, Script _ of _
+# Wildlife Insights Data Processing workflow, Script 1 of _
 # Author: Will Harrod
 # Date Created: 2026-09-22
 ################################################################################
@@ -70,15 +70,13 @@ seqs <- seqs_raw |>
 # View
 glimpse(seqs)
 
-# 2.2) Sequence Summaries ------------------------------------------------------
-
 # List of species 
 seqs |> 
   count(Common.Name, Genus, Species) |> 
   arrange(-n) |> 
   print(n = Inf)
 
-# 2.3) Remove species ----------------------------------------------------------
+# 2.2) Remove species ----------------------------------------------------------
 
 # Lump some rare etections by genus 
 seqs_lumped <- seqs |> 
@@ -92,7 +90,7 @@ seqs_lumped <- seqs |>
 
 
 # Cutoff for the fewest number of detections to include
-sp_cutoff <-  8
+sp_cutoff <-  3
 
 # List of species with few detections
 rare_sp <- seqs_lumped |> 
@@ -112,21 +110,61 @@ seqs_common |>
   print(n = Inf)
 
 # List of species to remove
-drop_sp <- c("Carolina Wren", "Woodrat or Rat or Mouse Species")
+drop_sp <- c(
+  "Carolina Wren", 
+  "Woodrat or Rat or Mouse Species", 
+  "Frogs", 
+  "Small Mammal", 
+  "Eulipotyphla Order", 
+  "American Black Bear"
+             )
 
 # Filter those out
-seqs_model <- seqs_common |> 
+seqs_sp_lst <- seqs_common |> 
   filter(!Common.Name %in% drop_sp)
 
-# View emaining species
-seqs_model |> 
+# View remaining species
+seqs_sp_lst  |> 
   count(Common.Name) |> 
   arrange(-n) |> 
   print(n = Inf)
-glimpse(seqs_model)
-  
+glimpse(seqs_sp_lst)
+
+# 2.3) Combine detections at the same time -------------------------------------
+
+# Prep the data to combine detections within 60 minutes
+seq_model <- seqs_sp_lst %>%
+  #Sort chronologically by location, species, and timestamp
+  arrange(Plot.ID, Class, Genus, Species, Common.Name, Time.Start) %>%
+  # Group by location and taxonomy/species metadata
+  group_by(Plot.ID, Class, Genus, Species, Common.Name) %>%
+  # Identify continuous events separated by gaps > 60 minutes
+  mutate(
+    # Time difference from previous detection in minutes
+    time_gap = as.numeric(difftime(Time.Start, lag(Time.Start), units = "mins")),
+    # Increment event ID whenever gap > 60 mins (or on the first row where lag is NA)
+    event_id = cumsum(coalesce(time_gap > 60, TRUE))
+  ) %>%
+  # Collapse each detection event into a single record
+  group_by(Common.Name, Plot.ID, Class, Genus, Species, event_id) %>%
+  summarise(
+    Time.Start = min(Time.Start),
+    Time.End = max(Time.End),
+    n.Seq = n(),
+    Max.Group.Size = max(Group.Size, na.rm = TRUE),
+    # Hut.ID = Hut.ID,
+    .groups= "drop"
+  ) |> 
+  # Remove columns that are no longer needed
+  select(-event_id) |> 
+  mutate(Date = as.Date(Time.Start),
+         Plot.Date = paste(Plot.ID, Date, sep = "-")) |> 
+  relocate(Date, .before = Time.Start) 
+# View
+glimpse(seq_model)
+
 ################################################################################
-# 3) Clean the deployment ######################################################
+# 3) Clean the deployment data #################################################
 ################################################################################
 
 # 3.1) Initial cleaning --------------------------------------------------------
@@ -150,7 +188,7 @@ dpys <- dpys_raw |>
   mutate(
     Plot.Type = str_sub(Deployment, start = 1, end = 2),     
     Plot.ID = str_sub(Deployment, start = 1, end = 4),
-    Hut.ID = str_sub(Deployment, start = 11, end = 13),
+    Hut.ID = str_sub(Deployment, start = 11, end = 14),
     Sensor.Type = str_sub(Deployment, start = 6, end = 7),
     Deployment.ID = str_sub(Deployment, start = 21, end = 22),
     Settings = str_sub(Deployment, start = 24, end = 25)
@@ -160,8 +198,10 @@ dpys <- dpys_raw |>
     Plot.Type == "IF" ~ "Interior Forest",
     Plot.Type == "RE" ~ "Reference Edge",
     Plot.Type == "TO" ~ "Turbine Opening",
-    Plot.Type == "TE" ~ "Turbine Edge"
-  )) |> 
+    Plot.Type == "TE" ~ "Turbine Edge"),
+  Start.Date = date(Start.Date),
+  End.Date = date(End.Date)
+  ) |> 
   # Select only one type of images
   filter(Sensor.Type %in% c("AD") & Settings %in% c("MC")) |> 
   # select useful columns
@@ -183,6 +223,9 @@ dpys <- dpys_raw |>
 
 # View after cleaning
 glimpse(dpys)
+dpys |>  count(Hut.ID)
+dpys |> count(Plot.ID) |>  print(n = Inf)
+dpys |>  filter(!Hut.ID %in% c("CamA", "CamB")) |> select(Plot.ID, Deployment.ID, Deployment, Hut.ID)
 
 # 3.2 Clean dates --------------------------------------------------------------
 
@@ -223,3 +266,89 @@ dpys_cammod |>
   count(Camera.Model) |> 
   arrange(-n) |> 
   print(n = Inf)
+
+# 3.3) Make detection data longer ----------------------------------------------
+
+# Find each survey occation for the cameras
+surveys <- dpys_cammod |> 
+  distinct(Plot.ID, Hut.ID, Start.Date, End.Date) |> 
+  arrange(Plot.ID, Hut.ID, Start.Date, End.Date)
+# View
+glimpse(surveys)
+
+# Storage tibbles
+survey_dates <- tibble()
+
+# Go through the deployments to make a row for every date
+survey_dates <- surveys %>%
+  mutate(
+    Start.Date = ymd(Start.Date),
+    End.Date   = ymd(End.Date)
+  ) %>%
+  # Expand date sequences for each deployment row
+  rowwise() %>%
+  mutate(Date = list(seq(Start.Date, End.Date, by = "day"))) %>%
+  unnest(Date) %>%
+  # Keep core columns and remove duplicate dates
+  select(Plot.ID, Hut.ID, Date) %>%
+  distinct()
+
+# View
+glimpse(survey_dates)
+
+# Pivot wider to combine huts and estimate effort
+survey_dates_efft <- survey_dates |> 
+  group_by(Plot.ID, Date) |> 
+  summarise(
+    Huts.Active = n(),
+    .groups = "drop"
+  ) |> 
+  mutate(Plot.Date = paste(Plot.ID, Date, sep = "-"))
+# View
+glimpse(survey_dates_efft)
+survey_dates_efft |> count(Huts.Active)
+survey_dates_efft |> filter(Huts.Active > 2)
+
+# 3.4) Combine deployment and detection data -----------------------------------
+
+# View
+glimpse(seq_model)
+glimpse(survey_dates_efft)
+
+# Find the dates where no species were found
+blank_dates <- survey_dates_efft |> 
+  filter(!Plot.Date %in% seq_model$Plot.Date)
+glimpse(blank_dates)
+
+# Combine the data and add the missing dates
+seq_dpy <- seq_model |> 
+  left_join(survey_dates_efft, by = c("Plot.ID", "Date", "Plot.Date")) |> 
+  bind_rows(blank_dates) |> 
+  select(-Plot.Date) |> 
+  arrange(Plot.ID, Date, Time.Start, Common.Name) |> 
+  mutate(Common.Name = replace_na(Common.Name, "No Detections")) |> 
+  mutate(across(
+    .cols = c("Class", "Genus", "Species"),
+    .fns = ~ifelse(Common.Name == "No Detections",
+                   yes = replace_na(., "No Detections"),
+                   no = .
+                   ))) |> 
+  mutate(across(.cols = c("n.Seq", "Max.Group.Size"), .fns = ~ replace_na(0)))
+# View
+glimpse(seq_dpy)
+
+# How many of the hut-nights had detections?
+seq_dpy |> count(Common.Name) |> print(n = Inf)
+
+# View the detections that do not match an official deployment date
+seq_dpy |> filter(is.na(Huts.Active) & Date > ymd("2026-01-01")) |> 
+  select(Common.Name, Plot.ID, Date, n.Seq, Huts.Active) |> 
+  print(n = Inf)
+
+# Remove the detections with no date if they look like true post-deployment detections
+ahdrift_dat <- seq_dpy |> filter(!is.na(Huts.Active))
+# View one last time
+glimpse(ahdrift_dat)
+
+# Save
+write_csv(ahdrift_dat, path(wd, "ahdrift_data_cleaned.csv"))
