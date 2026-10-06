@@ -23,13 +23,13 @@ wd <- "/home/will/NCSU/R_Code/Wildlife_Insights_Data_Management/Data"
 # View file names
 basename(dir_ls(wd))
 
-# Read the AHDriFt data back in
-ahdrift_dat <- read_csv(path(wd, "ahdrift_data_cleaned.csv"))
+# Read the AHDriFT data back in
+ahdrift_dat_raw <- read_csv(path(wd, "ahdrift_data_cleaned.csv"))
 # View
-glimpse(ahdrift_dat)
+glimpse(ahdrift_dat_raw)
 
 # Clean the data for spOccupancy
-ahdrift_dat_spOcc <-  ahdrift_dat |> 
+ahdrift_dat_spOcc <-  ahdrift_dat_raw |> 
   # Clean the Spcies Names
   mutate(
     Common.Name = str_replace_all(Common.Name, " ", "."),
@@ -46,7 +46,7 @@ ahdrift_dat_spOcc <-  ahdrift_dat |>
          Date.scl = scale(Date.num)[,1]) |> 
   # Select Only necessary columns 
   select(Common.Name, Plot.ID, Plot.ID.fct, Plot.Type, Plot.Type.fct, 
-         Date, Date.num, Date.scl, Huts.Active) |> 
+         Date, Date.num, Date.scl, Huts.Active) 
 
 
 ################################################################################
@@ -96,7 +96,7 @@ str(eft_mtx)
 
 # List of visits by plot
 plt_vst_ls <-  ahdrift_dat_spOcc |> 
-  distinct(Plot.ID.fct, Date.num) |> 
+  distinct(Plot.ID, Plot.ID.fct, Date, Date.num, Date.scl) |> 
   arrange(Plot.ID.fct, Date.num)
 glimpse(plt_vst_ls)
 
@@ -109,15 +109,16 @@ for(s in 1:n_sp){
   # Filter detections of that species
   sp_dct <- ahdrift_dat_spOcc |> 
     filter(Common.Name == sp) |> 
-    select(Plot.ID.fct, Date.num, Date.scl, Huts.Active) |> 
+    select(Plot.ID.fct, Date.num) |> 
     mutate(Detected = 1) |> 
     distinct() |> 
     right_join(plt_vst_ls, by = c("Plot.ID.fct", "Date.num")) |> 
-    mutate(Detected = replace_na(Detected, 0)) 
+    mutate(Detected = replace_na(Detected, 0)) |> 
+    arrange(Date, Plot.ID)
   
   # Loop over the plots to fill the matrix 
   for(j in 1:n_plt){
-    
+   
     # Filter detentions to that plot
     plt_dct <- sp_dct |> 
       filter(Plot.ID.fct == j) |>
@@ -137,6 +138,9 @@ for(s in 1:n_sp){
     day_mtx[j, 1:n_vst_plt] <- plt_det_cov_dat$Date.scl
     eft_mtx[j, 1:n_vst_plt] <- plt_det_cov_dat$Huts.Active
   }
+  
+  # Message
+  message("Created detection matrix for ", sp, " Species ", s, " out of ", n_sp)
   
 }
 
@@ -179,9 +183,9 @@ occ_covs <- ahdrift_dat_spOcc |>
   arrange(Plot.ID) |>
   left_join(tot_eft, by = "Plot.ID") |> 
   # Change covariate names
-  rename(
+  mutate(
     plot.type = Plot.Type.fct,
-    total.effort = n
+    total.effort = scale(n)[,1]
   ) |> 
   # Here is where you can change what goes in the occupancy covariates
   select(
@@ -189,7 +193,7 @@ occ_covs <- ahdrift_dat_spOcc |>
     total.effort
     ) |> 
   # Convert too matrix
-  as.matrix()
+  as.matrix() 
 # View
 occ_covs
 
@@ -228,20 +232,26 @@ priors <- list(
 )
 
 # MCMC parameters
-n_sample <- 80000
+n_sample <- 20000
 n_rprt <- n_sample/2
 n_burn <- n_sample/2
-n_thin <-  20
+n_thin <-  125
 n_chains <- 3
 
+# How many samples per chain?
+((n_sample - n_burn) / n_thin)
+
 # Model formulas 
-occ_formu <- ~plot.type +total.effort
-det_formu <- ~ date + daily.effort + I(date^2)
+occ_formu <- ~ factor(plot.type) + total.effort
+det_formu <- ~ factor(daily.effort) + date + I(date^2)
+
+# Directory for the model output
+mcmc_dir <- "/home/will/NCSU/Model_Outputs"
 
 # 3.2) Run the model -----------------------------------------------------------
 
 # Run the model
-occ_mod1 <- msPGOcc(
+ahdrifft_occ_mod1 <- msPGOcc(
   occ.formula = occ_formu,  # Occupancy Formula
   det.formula = det_formu,  # Detection formula
   data = dat_lst,           # Data
@@ -257,11 +267,39 @@ occ_mod1 <- msPGOcc(
 )
 
 # Make sure all is good
-summary(occ_mod1)
+summary(ahdrifft_occ_mod1)
+
+# Save the Model summary
+saveRDS(ahdrifft_occ_mod1, path(mcmc_dir, "ahdrifft_occ_mod1.rds"))
 
 ################################################################################
 # 4) Model Diagnostics #########################################################
 ################################################################################
 
+# Directory for the model output
+mcmc_dir <- "/home/will/NCSU/Model_Outputs"
 
+# Directory for figures
+fig_dir <- "/home/will/NCSU/Figures"
+
+# Load the output back in
+ahdrifft_occ_mod1 <- readRDS(path(mcmc_dir, "ahdrifft_occ_mod1.rds"))
+
+# View MCMC summary
+summary(ahdrifft_occ_mod1)
+
+# Traceplots 
+plot(ahdrifft_occ_mod1, 'beta', density = FALSE) 
+
+
+# Are R-hat values good?
+summary(ahdrifft_occ_mod1)
+
+# View MCMC plot
+MCMCplot(
+  object = ahdrifft_occ_mod1$samples,
+  # excl = c("fit_pa", "fit_pa_new", "fit_pd", "fit_pd_new"),
+  guide_lines = TRUE,
+  params = sobs_params
+         )
 

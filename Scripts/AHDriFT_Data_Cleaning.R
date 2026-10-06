@@ -276,9 +276,6 @@ surveys <- dpys_cammod |>
 # View
 glimpse(surveys)
 
-# Storage tibbles
-survey_dates <- tibble()
-
 # Go through the deployments to make a row for every date
 survey_dates <- surveys %>%
   mutate(
