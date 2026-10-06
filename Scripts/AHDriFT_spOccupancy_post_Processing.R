@@ -67,6 +67,14 @@ ahdrift_dat_spOcc <-  ahdrift_dat_raw |>
 # View
 glimpse(ahdrift_dat_spOcc)
 
+# List of species 
+sp_ls <- ahdrift_dat_spOcc |> 
+  distinct(Common.Name) |> 
+  arrange(Common.Name) |> 
+  pull(Common.Name)
+# View
+sp_ls
+
 # Load the spOccupancy output back in
 ahdrift_occ_mod <- readRDS(path(mcmc_dir, "ahdrifft_occ_mod1.rds"))
 
@@ -194,14 +202,14 @@ ci_max <- 0.875
 ci_min <- 1 - ci_max
 
 # Model formulas 
-occ_formu <- ~ factor(Plot.Type) + Effort
-det_formu <- ~ date + I(date^2)
+occ_formu <- ~ factor(plot.type) + total.effort
+det_formu <- ~ date + I(date^2) + factor(daily.effort)
 
 # Generate sample plots for predictions
 pred_df <- data.frame(
-  Plot.Type = factor(c("IF", "RE", "TO"), levels = c("IF", "RE", "TO")),
-  Effort = rep(0, 3)
-)
+  plot.type = factor(c("IF", "RE", "TE", "TO"), levels = c("IF", "RE", "TE", "TO"))
+) |> 
+  mutate(total.effort = rep(0, nrow(pred_df)))
 
 # Generate design matrix using your original occurrence formula
 X.0 <- model.matrix(occ_formu, data = pred_df)
@@ -227,16 +235,21 @@ ahdrift_occ_prob_pred_re <- data.frame(ahdrift_occ_prob_pred[, , 2]) |>
   tibble() |>
   pivot_longer(names_to = "Species", values_to = "Psi", cols = everything()) |> 
   mutate(Plot.Type = "Reference Edge")
-ahdrift_occ_prob_pred_tb <- data.frame(ahdrift_occ_prob_pred[, , 3]) |> 
+ahdrift_occ_prob_pred_te <- data.frame(ahdrift_occ_prob_pred[, , 3]) |> 
   tibble() |>
   pivot_longer(names_to = "Species", values_to = "Psi", cols = everything()) |> 
-  mutate(Plot.Type = "Turbine")
+  mutate(Plot.Type = "Turbine Edge")
+ahdrift_occ_prob_pred_to <- data.frame(ahdrift_occ_prob_pred[, , 4]) |> 
+  tibble() |>
+  pivot_longer(names_to = "Species", values_to = "Psi", cols = everything()) |> 
+  mutate(Plot.Type = "Turbine Opening")
 
 # Combine
 ahdrift_occ_prob_pred_full <- bind_rows(
   ahdrift_occ_prob_pred_if,
   ahdrift_occ_prob_pred_re,
-  ahdrift_occ_prob_pred_tb
+  ahdrift_occ_prob_pred_te,
+  ahdrift_occ_prob_pred_to
 )
 
 # View
@@ -266,7 +279,9 @@ glimpse(ahdrift_occ_prob_pred_sum)
 wind_pal <- c(
   "Interior Forest" = "forestgreen",
   "Reference Edge" = "goldenrod3",
-  "Turbine" = "darkorchid4")
+  "Turbine Edge" = "violetred3",
+  "Turbine Opening" = "darkorchid4"
+  )
 
 # Make the plot
 ahdrift_occ_prob_pred_fig <- ahdrift_occ_prob_pred_sum |>
@@ -335,22 +350,34 @@ signif_pal <- c(
 )
 
 # Extract differences between turbines and the other plot types
-ahdrift_occ_diff_tb_if <- data.frame(ahdrift_occ_prob_pred[, , 3] - ahdrift_occ_prob_pred[, , 1]) |> 
+ahdrift_occ_diff_te_if <- data.frame(ahdrift_occ_prob_pred[, , 3] - ahdrift_occ_prob_pred[, , 1]) |> 
   tibble() |> 
   pivot_longer(names_to = "Species", values_to = "Psi", cols = everything()) |> 
-  mutate(Psi.Diff = "Turbine vs Interior Forest")
-ahdrift_occ_diff_tb_re <- data.frame(ahdrift_occ_prob_pred[, , 3] - ahdrift_occ_prob_pred[, , 2]) |> 
+  mutate(Psi.Diff = "Turbine Edge vs Interior Forest")
+ahdrift_occ_diff_te_re <- data.frame(ahdrift_occ_prob_pred[, , 3] - ahdrift_occ_prob_pred[, , 2]) |> 
   tibble() |> 
   pivot_longer(names_to = "Species", values_to = "Psi", cols = everything()) |> 
-  mutate(Psi.Diff = "Turbine vs Reference Edge")
+  mutate(Psi.Diff = "Turbine Edge vs Reference Edge")
+ahdrift_occ_diff_to_if <- data.frame(ahdrift_occ_prob_pred[, , 4] - ahdrift_occ_prob_pred[, , 1]) |> 
+  tibble() |> 
+  pivot_longer(names_to = "Species", values_to = "Psi", cols = everything()) |> 
+  mutate(Psi.Diff = "Turbine Opening vs Interior Forest")
+ahdrift_occ_diff_to_re <- data.frame(ahdrift_occ_prob_pred[, , 4] - ahdrift_occ_prob_pred[, , 2]) |> 
+  tibble() |> 
+  pivot_longer(names_to = "Species", values_to = "Psi", cols = everything()) |> 
+  mutate(Psi.Diff = "Turbine Opening vs Reference Edge")
 # View
-glimpse(ahdrift_occ_diff_tb_if)
-glimpse(ahdrift_occ_diff_tb_re)
+glimpse(ahdrift_occ_diff_te_if)
+glimpse(ahdrift_occ_diff_te_re)
+glimpse(ahdrift_occ_diff_to_if)
+glimpse(ahdrift_occ_diff_to_re)
 
 # Combine
 ahdrift_occ_diff_full <- bind_rows(
-  ahdrift_occ_diff_tb_if,
-  ahdrift_occ_diff_tb_re
+  ahdrift_occ_diff_te_if,
+  ahdrift_occ_diff_te_re,
+  ahdrift_occ_diff_to_if,
+  ahdrift_occ_diff_to_re
 ) |> 
   group_by(Species, Psi.Diff) |> 
   reframe(Mean = mean(Psi),

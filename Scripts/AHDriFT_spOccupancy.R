@@ -58,7 +58,7 @@ glimpse(ahdrift_dat_spOcc)
 
 # List of species 
 sp_ls <-  ahdrift_dat_spOcc |>
-  filter(Common.Name != "No Detections") |> 
+  filter(Common.Name != "No.Detections") |> 
   distinct(Common.Name) |> 
   arrange(Common.Name) |> 
   pull(Common.Name)
