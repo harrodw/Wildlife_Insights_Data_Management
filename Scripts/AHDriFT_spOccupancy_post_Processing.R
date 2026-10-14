@@ -69,6 +69,7 @@ glimpse(ahdrift_dat_spOcc)
 
 # List of species 
 sp_ls <- ahdrift_dat_spOcc |> 
+  filter(Common.Name != "No.Detections") |> 
   distinct(Common.Name) |> 
   arrange(Common.Name) |> 
   pull(Common.Name)
@@ -202,14 +203,14 @@ ci_max <- 0.875
 ci_min <- 1 - ci_max
 
 # Model formulas 
-occ_formu <- ~ factor(plot.type) + total.effort
+occ_formu <- ~ factor(plot.type)
 det_formu <- ~ date + I(date^2) + factor(daily.effort)
 
 # Generate sample plots for predictions
 pred_df <- data.frame(
   plot.type = factor(c("IF", "RE", "TE", "TO"), levels = c("IF", "RE", "TE", "TO"))
 ) |> 
-  mutate(total.effort = rep(0, nrow(pred_df)))
+  mutate(total.effort = rep(0, length(levels(plot.type))))
 
 # Generate design matrix using your original occurrence formula
 X.0 <- model.matrix(occ_formu, data = pred_df)
@@ -287,7 +288,8 @@ wind_pal <- c(
 ahdrift_occ_prob_pred_fig <- ahdrift_occ_prob_pred_sum |>
   mutate(Species = str_replace_all(Species, fixed("."), " ")) |>
   mutate(Species = factor(Species)) |> 
-  mutate(Species = fct_reorder(Species, desc(Species))) |> 
+  # filter(Plot.Type == "Turbine Opening") |> # Comment out
+  mutate(Species = fct_reorder(Species, Mean)) |> 
   ggplot(aes(y = Species)) +
   # Add points at the mean values for each parameter
   geom_point(
@@ -304,7 +306,6 @@ ahdrift_occ_prob_pred_fig <- ahdrift_occ_prob_pred_sum |>
     aes(
       xmin = CI.Low,
       xmax = CI.High,
-      # linetype = Supported,
       colour = Plot.Type
     ),
     linewidth = 0.4,
@@ -317,17 +318,19 @@ ahdrift_occ_prob_pred_fig <- ahdrift_occ_prob_pred_sum |>
   labs(x = "Parameter Estimate", y = "") + 
   # Simple theme
   theme_bw() +
+  scale_x_continuous(breaks = c(0.25, 0.75)) +
   # Edit theme
   theme(
-    legend.position = "top", 
-    legend.text = element_text(size = 10), 
+    # legend.position = "none",
+    legend.position = "top",
+    legend.text = element_text(size = 10),
     legend.title = element_blank(),
     plot.title = element_blank(),
     axis.text.y = element_text(size = 8),
     axis.title.x = element_blank(),
     axis.text.x = element_text(size = 10)
   ) +
-  facet_wrap(~Plot.Type)
+  facet_wrap(~Plot.Type, nrow = 1, ncol = 4)
 
 # View the plot 
 ahdrift_occ_prob_pred_fig
@@ -335,8 +338,8 @@ ahdrift_occ_prob_pred_fig
 # Save the plot as a png
 ggsave(plot = ahdrift_occ_prob_pred_fig,
        path(fig_dir, "ahdrift_occupancy_prob_plot_type_whiskers.png"),
-       width = 200,
-       height = 175,
+       width = 250,
+       height = 150,
        units = "mm",
        dpi = 300)
 
@@ -345,7 +348,8 @@ ggsave(plot = ahdrift_occ_prob_pred_fig,
 
 # Palette
 signif_pal <- c(
-  "Supported Difference" = "darkblue",
+  "Increased Occupancy near Turbines" = "darkorchid4",
+  "Decreased Occupancy near Turbines" = "turquoise4",
   "No Supported Difference" = "gray30"
 )
 
@@ -353,19 +357,19 @@ signif_pal <- c(
 ahdrift_occ_diff_te_if <- data.frame(ahdrift_occ_prob_pred[, , 3] - ahdrift_occ_prob_pred[, , 1]) |> 
   tibble() |> 
   pivot_longer(names_to = "Species", values_to = "Psi", cols = everything()) |> 
-  mutate(Psi.Diff = "Turbine Edge vs Interior Forest")
+  mutate(Psi.Diff = "Interior Forest vs Turbine Edge")
 ahdrift_occ_diff_te_re <- data.frame(ahdrift_occ_prob_pred[, , 3] - ahdrift_occ_prob_pred[, , 2]) |> 
   tibble() |> 
   pivot_longer(names_to = "Species", values_to = "Psi", cols = everything()) |> 
-  mutate(Psi.Diff = "Turbine Edge vs Reference Edge")
+  mutate(Psi.Diff = "Reference Edge vs Turbine Edge")
 ahdrift_occ_diff_to_if <- data.frame(ahdrift_occ_prob_pred[, , 4] - ahdrift_occ_prob_pred[, , 1]) |> 
   tibble() |> 
   pivot_longer(names_to = "Species", values_to = "Psi", cols = everything()) |> 
-  mutate(Psi.Diff = "Turbine Opening vs Interior Forest")
+  mutate(Psi.Diff = "Interior Forest vs Turbine Opening")
 ahdrift_occ_diff_to_re <- data.frame(ahdrift_occ_prob_pred[, , 4] - ahdrift_occ_prob_pred[, , 2]) |> 
   tibble() |> 
   pivot_longer(names_to = "Species", values_to = "Psi", cols = everything()) |> 
-  mutate(Psi.Diff = "Turbine Opening vs Reference Edge")
+  mutate(Psi.Diff = "Reference Edge vs Turbine Opening")
 # View
 glimpse(ahdrift_occ_diff_te_if)
 glimpse(ahdrift_occ_diff_te_re)
@@ -385,8 +389,9 @@ ahdrift_occ_diff_full <- bind_rows(
           CI.High = quantile(Psi, probs = ci_max)
   )  |> 
   distinct() |> 
-  mutate(Supported = case_when(CI.High*CI.Low > 0 ~ "Supported Difference",
-                               CI.High*CI.Low <= 0 ~ "No Supported Difference"
+  mutate(Supported = case_when(CI.Low > 0 & CI.High > 0 ~ "Increased Occupancy near Turbines",
+                               CI.Low < 0 & CI.High < 0 ~ "Decreased Occupancy near Turbines",
+                               CI.Low * CI.High < 0 ~ "No Supported Difference"
   )) 
 # View
 glimpse(ahdrift_occ_diff_full)
@@ -395,7 +400,7 @@ glimpse(ahdrift_occ_diff_full)
 ahdrift_occ_diff_plot_whisker <- ahdrift_occ_diff_full |>
   mutate(Species = str_replace_all(Species, fixed("."), " ")) |>
   mutate(Species = factor(Species)) |> 
-  mutate(Species = fct_reorder(Species, desc(Species))) |> 
+  mutate(Species = fct_reorder(Species, Mean)) |> 
   ggplot(aes(y = Species)) +
   # Add points at the mean values for each parameter
   geom_point(
@@ -432,7 +437,7 @@ ahdrift_occ_diff_plot_whisker <- ahdrift_occ_diff_full |>
     axis.title.x = element_blank(),
     axis.text.x = element_text(size = 10)
   ) +
-  facet_wrap(~Psi.Diff)
+  facet_wrap(~Psi.Diff, nrow = 1, ncol = 4)
 
 # View the plot 
 ahdrift_occ_diff_plot_whisker
@@ -440,8 +445,8 @@ ahdrift_occ_diff_plot_whisker
 # Save the plot as a png
 ggsave(plot = ahdrift_occ_diff_plot_whisker,
        path(fig_dir, "ahdrift_occupancy_diff_plot_type_whiskers.png"),
-       width = 200,
-       height = 175,
+       width = 275,
+       height = 150,
        units = "mm",
        dpi = 300)
 

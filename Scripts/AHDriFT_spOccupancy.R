@@ -242,7 +242,7 @@ n_chains <- 3
 ((n_sample - n_burn) / n_thin)
 
 # Model formulas 
-occ_formu <- ~ factor(plot.type) + total.effort
+occ_formu <- ~ factor(plot.type) 
 det_formu <- ~ factor(daily.effort) + date + I(date^2)
 
 # Directory for the model output

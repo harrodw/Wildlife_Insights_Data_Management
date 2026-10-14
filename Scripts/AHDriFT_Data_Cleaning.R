@@ -111,11 +111,12 @@ seqs_common |>
 
 # List of species to remove
 drop_sp <- c(
-  "Carolina Wren", 
+  "Carolina Wren",
   "Woodrat or Rat or Mouse Species", 
   "Frogs", 
   "Small Mammal", 
   "Eulipotyphla Order", 
+  "Bird",
   "American Black Bear"
              )
 
@@ -269,9 +270,21 @@ dpys_cammod |>
 
 # 3.3) Make detection data longer ----------------------------------------------
 
+# Find all the survey locations
+plt_locs <- dpys_cammod |> 
+  distinct(Plot.ID, x, y) |> 
+  group_by(Plot.ID) |> 
+  mutate(x = mean(x), y = mean(y)) |> 
+  ungroup() |> 
+  distinct() |> 
+  arrange(Plot.ID)
+# View
+glimpse(plt_locs)
+plt_locs |> print(n = Inf)
+
 # Find each survey occation for the cameras
 surveys <- dpys_cammod |> 
-  distinct(Plot.ID, Hut.ID, Start.Date, End.Date) |> 
+  distinct(Plot.ID, Plot.Type, Plot.Name, Hut.ID, Start.Date, End.Date) |> 
   arrange(Plot.ID, Hut.ID, Start.Date, End.Date)
 # View
 glimpse(surveys)
@@ -287,7 +300,7 @@ survey_dates <- surveys %>%
   mutate(Date = list(seq(Start.Date, End.Date, by = "day"))) %>%
   unnest(Date) %>%
   # Keep core columns and remove duplicate dates
-  select(Plot.ID, Hut.ID, Date) %>%
+  select(Plot.ID, Plot.Type, Plot.Name, Hut.ID, Date) %>%
   distinct()
 
 # View
@@ -295,12 +308,14 @@ glimpse(survey_dates)
 
 # Pivot wider to combine huts and estimate effort
 survey_dates_efft <- survey_dates |> 
-  group_by(Plot.ID, Date) |> 
+  group_by(Plot.ID, Plot.Type, Plot.Name, Date) |> 
   summarise(
     Huts.Active = n(),
     .groups = "drop"
   ) |> 
-  mutate(Plot.Date = paste(Plot.ID, Date, sep = "-"))
+  mutate(Plot.Date = paste(Plot.ID, Date, sep = "-")) |> 
+  # Add location info
+  left_join(plt_locs, by = "Plot.ID")
 # View
 glimpse(survey_dates_efft)
 survey_dates_efft |> count(Huts.Active)
@@ -330,7 +345,9 @@ seq_dpy <- seq_model |>
                    yes = replace_na(., "No Detections"),
                    no = .
                    ))) |> 
-  mutate(across(.cols = c("n.Seq", "Max.Group.Size"), .fns = ~ replace_na(0)))
+  mutate(across(.cols = c("n.Seq", "Max.Group.Size"), .fns = ~ replace_na(0))) |> 
+  select(Common.Name, Class, Plot.ID, Plot.Type, Plot.Name, Date,  
+         Genus, Species, Time.Start, Time.End, Huts.Active, n.Seq, Max.Group.Size, x, y)
 # View
 glimpse(seq_dpy)
 
